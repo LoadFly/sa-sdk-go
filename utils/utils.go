@@ -26,6 +26,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -56,16 +57,39 @@ func DoRequest(url, args string, to time.Duration) error {
 	return nil
 }
 
-func gzipData(data string) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
+var (
+	spWriter sync.Pool
+	spBuffer sync.Pool
+)
 
-	_, err := zw.Write([]byte(data))
+func init() {
+	// 公共对象池,更极致的优化可以建多个池
+	spWriter = sync.Pool{New: func() interface{} {
+		buf := new(bytes.Buffer)
+		return gzip.NewWriter(buf)
+	}}
+	spBuffer = sync.Pool{New: func() interface{} {
+		return new(bytes.Buffer)
+	}}
+}
+
+func gzipData(data string) ([]byte, error) {
+	buf := spBuffer.Get().(*bytes.Buffer)
+	w := spWriter.Get().(*gzip.Writer)
+	w.Reset(buf)
+	defer func() {
+		// 归还buff
+		buf.Reset()
+		spBuffer.Put(buf)
+		// 归还Writer
+		spWriter.Put(w)
+	}()
+	_, err := w.Write([]byte(data))
 	if err != nil {
-		zw.Close()
+		w.Close()
 		return nil, err
 	}
-	zw.Close()
+	w.Close()
 
 	return buf.Bytes(), nil
 }
